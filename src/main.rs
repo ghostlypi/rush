@@ -1,6 +1,7 @@
 use std::{io, process::exit, env};
 use nix::{sys::wait::waitpid,unistd::{fork, ForkResult, write}};
 use exec;
+use shell_words::{self, split};
 
 enum Priority{
     BG,
@@ -56,7 +57,9 @@ fn main() -> io::Result<()> {
         path.push_str("> ");
         let _err = write(libc::STDOUT_FILENO, path.as_str().as_bytes());
         io::stdin().read_line(&mut buffer)?;
-        let mut tokens = buffer.split_whitespace();
+        let split = split(&buffer);
+        let tokens = match split{Ok(x) => x, Err(_e) => vec!["".to_string()]};
+        let mut tokens = tokens.iter();
         let cmd = match tokens.nth(0) {
             None => "".to_string(),
             Some(x) => x.to_string(),
@@ -74,7 +77,7 @@ fn main() -> io::Result<()> {
         let mut command = Command {
             cmd: cmd,
             priority: context,
-            args: tokens.map(str::to_string).collect()
+            args: tokens.map(|x| x.as_str().to_string()).collect()
         };
         if matches!(command.priority, Priority::FG) {
             command.args.push(bg.to_string())
