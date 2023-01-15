@@ -69,6 +69,8 @@ fn make_header() -> io::Result<()> {
     let raw_path = env::current_dir()?;
     let mut path = raw_path.as_os_str().to_str().unwrap().to_string();
     path.push_str("> ");
+    let home = match env::var("HOME") {Ok(x) => x, Err(_e)=> "".to_string()};
+    path = path.replace(home.as_str(),"~");
     let _err = write(libc::STDOUT_FILENO, path.as_str().as_bytes());
     return Ok(());
 }
