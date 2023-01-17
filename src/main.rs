@@ -16,12 +16,11 @@ struct Command {
 
 struct Job {
     pid : i32,
-    jid : i32,
+    // jid : i32,
 }
 
 static mut FG : Job = Job {
     pid: 0,
-    jid: 0,
 };
 
 impl Command {
@@ -36,31 +35,54 @@ impl Command {
         print!("}}\n")
     }
 
-    fn process(&self){
+    fn process(&mut self){
         if self.cmd.as_str() == "exit" {
             exit(0);    
         } else if self.cmd.as_str() == "jobs" {
             // TODO: print jobs
         } else if self.cmd.as_str() == "kill" {
             // TODO: kill specified job
-        } else if matches!(&self.priority, Priority::FG){
-            match unsafe{fork()} {
-                Ok(ForkResult::Parent { child, .. }) => {
-                    unsafe { 
-                        FG = Job {
-                            pid: child.as_raw(),
-                            jid: -child.as_raw(),
-                        };
-                    }
-                    waitpid(child, None).unwrap();
-                }
-                Ok(ForkResult::Child) => {
-                    let _err = exec::Command::new(self.cmd.as_str())
-                    .args(&self.args)
-                    .exec();
-                }
-                Err(_) => println!("Fork failed"),
+        } else if self.cmd.as_str() == "clear"{
+            if self.args.len() == 1 && match self.args.get(0){Some (x) => x, None => ""}.to_string().as_str() == ""{
+               let _tmp = self.args.pop();
+               self.args.push("-T".to_string());
+               self.args.push(match env::var("TERM") {Ok(x) => x, Err(_e) => "".to_string(),});
             }
+            self.execute();
+
+        } else if self.cmd.as_str() == "ls" {
+            if self.args.len() == 1 && match self.args.get(0){Some (x) => x, None => ""}.to_string().as_str() == ""{
+                let _tmp = self.args.pop();
+                self.args.push(".".to_string());
+             }
+             self.execute();
+        } else if self.cmd.as_str() == "cd" {
+            if self.args.len() == 1 && (match self.args.get(0){Some (x) => x, None => ""}.to_string().as_str() == "" || match self.args.get(0){Some (x) => x, None => ""}.to_string().as_str() == "~"){
+                let _tmp = self.args.pop();
+                self.args.push(match env::var("HOME") {Ok(x) => x, Err(_e) => "".to_string()});
+            }
+            let _res = env::set_current_dir::<String>(match self.args.pop() {Some (x) => x, None => "".to_string()});
+        } else if matches!(&self.priority, Priority::FG){
+            self.execute();
+        }
+    }
+
+    fn execute(&self){
+        match unsafe{fork()} {
+            Ok(ForkResult::Parent { child, .. }) => {
+                unsafe { 
+                    FG = Job {
+                        pid: child.as_raw(),
+                    };
+                }
+                waitpid(child, None).unwrap();
+            }
+            Ok(ForkResult::Child) => {
+                let _err = exec::Command::new(self.cmd.as_str())
+                .args(&self.args)
+                .exec();
+            }
+            Err(_) => println!("Fork failed"),
         }
     }
 }
@@ -82,7 +104,9 @@ fn main() -> io::Result<()> {
     thread::spawn(move || {
         for sig in signals.forever() {
             if sig == 2 {
-                signal::kill(Pid::from_raw(unsafe{FG.pid}), Signal::SIGINT).unwrap();
+                if unsafe {FG.pid} != 0 {
+                    signal::kill(Pid::from_raw(unsafe{FG.pid}), Signal::SIGINT).unwrap();
+                }
             }
         }
     });
@@ -112,30 +136,43 @@ fn main() -> io::Result<()> {
             Some(x) => x.to_string(),
         };
         let context : Priority;
-        let bg : &str = match tokens.nth_back(0) {
-            None => "",
-            Some(x) => x,
+        let mut bg : String = match tokens.nth_back(0) {
+            None => "".to_string(),
+            Some(x) => x.to_string(),
         };
-        if bg == "&" {
+        if bg.as_str() == "&" {
             context = Priority::BG;
         } else {
            context = Priority::FG;
+           bg = if bg.starts_with("$"){
+            match env::var(bg.replace("$", "")) {
+                Ok(x) =>  x,
+                Err(_e) => "".to_string(),
+            }
+        } else {
+            bg
+        }
         }
 
         //Construct command object
         let mut command = Command {
             cmd: cmd,
             priority: context,
-            args: tokens.map(|x| x.as_str().to_string()).collect()
-        };
+            args: tokens.map(|x| {
+                if x.starts_with("$"){
+                    match env::var(x.replace("$", "")) {
+                        Ok(x) => x,
+                        Err(_e) => "".to_string(),
+                    }
+                } else {
+                    x.as_str().to_string()
+                }
+        }).collect()};
 
         //Re-add last arg if it's a background task
         if matches!(command.priority, Priority::FG) {
             command.args.push(bg.to_string())
         }
-
-        //DEBUG print statement
-        command.print();
 
         //Do the actual work
         command.process();
