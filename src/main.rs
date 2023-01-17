@@ -1,4 +1,4 @@
-use std::{io, process::exit, env, thread};
+use std::{io, process::exit, env, thread, ffi::{OsStr}};
 use nix::{sys::{wait::waitpid, signal::{self,Signal}},unistd::{fork, ForkResult, write, Pid}};
 use exec;
 use shell_words::{self, split};
@@ -24,6 +24,8 @@ static mut FG : Job = Job {
 };
 
 impl Command {
+
+    #[allow(dead_code)]
     fn print(&self){
         print!("Command {{");
         print!("{}, ", self.cmd);
@@ -90,14 +92,28 @@ impl Command {
 fn make_header() -> io::Result<()> {
     let raw_path = env::current_dir()?;
     let mut path = raw_path.as_os_str().to_str().unwrap().to_string();
-    path.push_str("> ");
     let home = match env::var("HOME") {Ok(x) => x, Err(_e)=> "".to_string()};
+    let user = match env::var("USER") {Ok(x) => x, Err(_e)=> "".to_string()};
+    let name = match gethostname::gethostname().to_str() {Some (x) => x.to_string(), None => "".to_string()};
     path = path.replace(home.as_str(),"~");
-    let _err = write(libc::STDOUT_FILENO, path.as_str().as_bytes());
+    let mut header = "\x1b[36m".to_string();
+    header.push_str(user.as_str());
+    header.push('@');
+    header.push_str(name.as_str());
+    header.push_str(":\x1b[0;31m");
+    header.push_str("[\x1b[0;34m");
+    header.push_str(path.as_str());
+    header.push_str("\x1b[0;31m]\x1b[0;32m$");
+    let _err = write(libc::STDOUT_FILENO, header.as_str().as_bytes());
     return Ok(());
 }
 
 fn main() -> io::Result<()> {
+    //Set Shell
+    let shell = env::current_exe();
+    let shell = match shell {Ok(x) => x.as_os_str().to_owned(), Err(_e)=>OsStr::new("").to_owned()};
+    env::set_var("SHELL", shell);
+
     //Initializing Signal handlers
     let mut signals = Signals::new(&[SIGINT])?;
 
